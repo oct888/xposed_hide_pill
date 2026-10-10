@@ -3,8 +3,9 @@
 An Xposed/LSPosed module designed for modern Pixel devices running Android 14+ / 16 (Baklava). It cleanly hides the gesture navigation bar pill and the keyboard dismiss down arrow (IME back button) without utilizing filesystem overlay mounts (such as Magisk/KernelSU mount overlays or RRO modules).
 
 ## Features
-- **Hide Navigation Pill**:
+- **Hide Navigation Pill & Eliminate Dead Space**:
   - Pixel Launcher / Taskbar (`StashedHandleView`, `StashedHandleViewController`, `TaskbarDragLayer`).
+  - Zeroes out navigation bar window dimensions and reported insets (`TaskbarInsetsController`, `TaskbarStashController`, `TaskbarActivityContext`), removing the bottom dead space across all apps without breaking swipe-up or back gestures.
   - SystemUI (`NavigationHandle`).
   - IME navigation bar (`android.inputmethodservice.navigationbar.NavigationHandle`).
 - **Hide Keyboard Dismiss Arrow**:

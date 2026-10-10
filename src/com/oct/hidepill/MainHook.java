@@ -3,6 +3,7 @@ package com.oct.hidepill;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.ImageView;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -196,6 +197,207 @@ public class MainHook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             XposedBridge.log(TAG + "Error hooking NavbarButtonsViewController: " + t);
         }
+
+        // E. Hook TaskbarInsetsController to zero out navigation bar and gesture insets
+        try {
+            Class<?> insetsControllerClass = XposedHelpers.findClassIfExists(
+                "com.android.launcher3.taskbar.TaskbarInsetsController", lpparam.classLoader);
+            if (insetsControllerClass != null) {
+                // Hook setProviderInsets(InsetsFrameProvider, int, int)
+                XposedBridge.hookAllMethods(insetsControllerClass, "setProviderInsets", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        try {
+                            Object provider = param.args[0];
+                            if (provider != null) {
+                                int type = (int) XposedHelpers.callMethod(provider, "getType");
+                                // 2 = navigationBars, 32 = mandatorySystemGestures, 64 = tappableElement
+                                if (type == android.view.WindowInsets.Type.navigationBars() ||
+                                    type == android.view.WindowInsets.Type.mandatorySystemGestures() ||
+                                    type == android.view.WindowInsets.Type.tappableElement()) {
+                                    XposedHelpers.callMethod(provider, "setInsetsSize", android.graphics.Insets.NONE);
+                                    try {
+                                        XposedHelpers.callMethod(provider, "setInsetsSizeOverrides", (Object) null);
+                                    } catch (Throwable ignored) {}
+                                }
+                            }
+                        } catch (Throwable t) {
+                            XposedBridge.log(TAG + "Error in setProviderInsets: " + t);
+                        }
+                    }
+                });
+
+                // Hook onTaskbarOrBubblebarWindowHeightOrInsetsChanged
+                XposedBridge.hookAllMethods(insetsControllerClass, "onTaskbarOrBubblebarWindowHeightOrInsetsChanged", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        try {
+                            WindowManager.LayoutParams lp = (WindowManager.LayoutParams)
+                                XposedHelpers.getObjectField(param.thisObject, "windowLayoutParams");
+                            if (lp != null) {
+                                zeroOutTaskbarLayoutParams(lp);
+                            }
+                        } catch (Throwable t) {
+                            XposedBridge.log(TAG + "Error in onTaskbarOrBubblebarWindowHeightOrInsetsChanged: " + t);
+                        }
+                    }
+                });
+
+                // Hook getProvidedInsets
+                XposedBridge.hookAllMethods(insetsControllerClass, "getProvidedInsets", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        try {
+                            Object[] providers = (Object[]) param.getResult();
+                            if (providers != null) {
+                                for (Object provider : providers) {
+                                    if (provider != null) {
+                                        int type = (int) XposedHelpers.callMethod(provider, "getType");
+                                        if (type == android.view.WindowInsets.Type.navigationBars() ||
+                                            type == android.view.WindowInsets.Type.mandatorySystemGestures() ||
+                                            type == android.view.WindowInsets.Type.tappableElement()) {
+                                            XposedHelpers.callMethod(provider, "setInsetsSize", android.graphics.Insets.NONE);
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+                });
+
+                XposedBridge.log(TAG + "TaskbarInsetsController successfully hooked");
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + "Error hooking TaskbarInsetsController: " + t);
+        }
+
+        // F. Hook TaskbarStashController to report 0 height to apps
+        try {
+            Class<?> stashControllerClass = XposedHelpers.findClassIfExists(
+                "com.android.launcher3.taskbar.TaskbarStashController", lpparam.classLoader);
+            if (stashControllerClass != null) {
+                XposedBridge.hookAllMethods(stashControllerClass, "getContentHeightToReportToApps", new XC_MethodReplacement() {
+                    @Override
+                    protected Object replaceHookedMethod(MethodHookParam param) throws Throwable {
+                        return 0;
+                    }
+                });
+                XposedBridge.log(TAG + "TaskbarStashController.getContentHeightToReportToApps hooked");
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + "Error hooking TaskbarStashController: " + t);
+        }
+
+        // G. Hook TaskbarActivityContext to zero out window dimensions
+        try {
+            Class<?> activityContextClass = XposedHelpers.findClassIfExists(
+                "com.android.launcher3.taskbar.TaskbarActivityContext", lpparam.classLoader);
+            if (activityContextClass != null) {
+                XposedBridge.hookAllMethods(activityContextClass, "getDefaultTaskbarWindowSize", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        try {
+                            boolean isThreeButtonNav = false;
+                            try {
+                                isThreeButtonNav = (boolean) XposedHelpers.callMethod(param.thisObject, "isThreeButtonNav");
+                            } catch (Throwable ignored) {}
+                            if (!isThreeButtonNav) {
+                                param.setResult(0);
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+                });
+
+                XposedBridge.hookAllMethods(activityContextClass, "createDefaultWindowLayoutParams", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        try {
+                            if (param.args.length > 1 && "Taskbar".equals(param.args[1])) {
+                                boolean isThreeButtonNav = false;
+                                try {
+                                    isThreeButtonNav = (boolean) XposedHelpers.callMethod(param.thisObject, "isThreeButtonNav");
+                                } catch (Throwable ignored) {}
+                                if (!isThreeButtonNav) {
+                                    WindowManager.LayoutParams lp = (WindowManager.LayoutParams) param.getResult();
+                                    if (lp != null) {
+                                        lp.height = 0;
+                                    }
+                                }
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+                });
+
+                XposedBridge.hookAllMethods(activityContextClass, "init", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        try {
+                            boolean isThreeButtonNav = false;
+                            try {
+                                isThreeButtonNav = (boolean) XposedHelpers.callMethod(param.thisObject, "isThreeButtonNav");
+                            } catch (Throwable ignored) {}
+                            if (!isThreeButtonNav) {
+                                XposedHelpers.setIntField(param.thisObject, "mLastRequestedNonFullscreenSize", 0);
+                                WindowManager.LayoutParams lp = (WindowManager.LayoutParams)
+                                    XposedHelpers.getObjectField(param.thisObject, "mWindowLayoutParams");
+                                if (lp != null) {
+                                    zeroOutTaskbarLayoutParams(lp);
+                                }
+                                Object controllers = XposedHelpers.getObjectField(param.thisObject, "mControllers");
+                                if (controllers != null) {
+                                    Object stashCtrl = XposedHelpers.getObjectField(controllers, "taskbarStashController");
+                                    if (stashCtrl != null) {
+                                        XposedHelpers.setIntField(stashCtrl, "mStashedHeight", 0);
+                                    }
+                                }
+                            }
+                        } catch (Throwable t) {
+                            XposedBridge.log(TAG + "Error in TaskbarActivityContext.init hook: " + t);
+                        }
+                    }
+                });
+
+                XposedBridge.log(TAG + "TaskbarActivityContext successfully hooked");
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + "Error hooking TaskbarActivityContext: " + t);
+        }
+    }
+
+    private static void zeroOutTaskbarLayoutParams(WindowManager.LayoutParams lp) {
+        if (lp == null) return;
+        lp.height = 0;
+        zeroOutInsetsProviders(lp);
+        try {
+            WindowManager.LayoutParams[] rotationParams = (WindowManager.LayoutParams[])
+                XposedHelpers.getObjectField(lp, "paramsForRotation");
+            if (rotationParams != null) {
+                for (WindowManager.LayoutParams rotLp : rotationParams) {
+                    if (rotLp != null) {
+                        rotLp.height = 0;
+                        zeroOutInsetsProviders(rotLp);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private static void zeroOutInsetsProviders(WindowManager.LayoutParams lp) {
+        try {
+            Object[] providers = (Object[]) XposedHelpers.getObjectField(lp, "providedInsets");
+            if (providers != null) {
+                for (Object provider : providers) {
+                    if (provider != null) {
+                        int type = (int) XposedHelpers.callMethod(provider, "getType");
+                        if (type == android.view.WindowInsets.Type.navigationBars() ||
+                            type == android.view.WindowInsets.Type.mandatorySystemGestures() ||
+                            type == android.view.WindowInsets.Type.tappableElement()) {
+                            XposedHelpers.callMethod(provider, "setInsetsSize", android.graphics.Insets.NONE);
+                        }
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
     }
 
     private void hookSystemUI(LoadPackageParam lpparam) {
